@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced Ambient Sound Reactive Asteroid Shooter</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; color: #0ff; font-family: 'Courier New', monospace; }
+        canvas { display: block; }
+        #ui-container { position: absolute; top: 10px; left: 10px; background-color: rgba(0, 0, 0, 0.7); padding: 10px; border-radius: 5px; }
+        #info { margin-bottom: 10px; }
+        #xyz-indicator { margin-top: 10px; }
+        .control-group { margin-bottom: 10px; }
+        label { display: inline-block; width: 150px; }
+        input[type="range"] { width: 200px; }
+        #audio-controls { margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div id="ui-container">
+        <div id="info">Left hand to navigate, right hand pinky-thumb to boost, index-thumb to shoot</div>
+        <div class="control-group">
+            <label for="asteroid-count">Asteroid Count:</label>
+            <input type="range" id="asteroid-count" min="50" max="500" value="200">
+            <span id="asteroid-count-value">200</span>
+        </div>
+        <div class="control-group">
+            <label for="flying-speed">Flying Speed:</label>
+            <input type="range" id="flying-speed" min="0.01" max="0.2" step="0.01" value="0.05">
+            <span id="flying-speed-value">0.05</span>
+        </div>
+        <div class="control-group">
+            <label for="boost-speed">Boost Speed:</label>
+            <input type="range" id="boost-speed" min="0.1" max="0.5" step="0.01" value="0.15">
+            <span id="boost-speed-value">0.15</span>
+        </div>
+        <div class="control-group">
+            <label for="steering-sensitivity">Steering Sensitivity:</label>
+            <input type="range" id="steering-sensitivity" min="0.1" max="1" step="0.1" value="0.3">
+            <span id="steering-sensitivity-value">0.3</span>
+        </div>
+        <div id="xyz-indicator"></div>
+        <div id="audio-controls">
+            <button id="start-audio">Start Audio Input</button>
+        </div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        let scene, camera, renderer, asteroids, gridHelper, starField;
+        let websocket, raycaster, collisionObjects = [];
+        let flyingSpeed = 0.05, boostSpeed = 0.15, currentSpeed = flyingSpeed;
+        let cameraOffset = new THREE.Vector3(0, 0, 5);
+        let cameraTarget = new THREE.Vector3();
+        let retroShader, retroMaterial;
+        let audioContext, analyser, microphone, dataArray;
+        let steeringSensitivity = 0.3;
+        let bullets = [];
+        let lastShootTime = 0;
+        let shootCooldown = 500; // milliseconds
+        let lastLeftHandPosition = new THREE.Vector2();
+        let lastRightHandPosition = new THREE.Vector2();
+        let smoothingFactor = 0.2;
+
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            raycaster = new THREE.Raycaster();
+
+            createRetroShader();
+            createAsteroidField();
+            createGridBackground();
+            createCrosshair();
+
+            updateCameraPosition();
+
+            setupAudioControls();
+            setupUIControls();
+            setupWebSockets();  // Hand gesture control
+
+            startVoiceRecognition();  // Voice command integration
+
+            animate();
+        }
+
+        function setupWebSockets() {
+            try {
+                websocket = new WebSocket("ws://localhost:6789");
+
+                websocket.onmessage = function(event) {
+                    const data = JSON.parse(event.data);
+                    console.log("Hand Data:", data); // Log received data to validate it
+
+                    leftHand = data.left;
+                    rightHand = data.right;
+
+                    if (!leftHand || !rightHand) {
+                        console.warn("Invalid hand data received.");
+                    }
+                };
+
+                websocket.onerror = function(error) {
+                    console.error("WebSocket Error: ", error);
+                };
+
+                websocket.onclose = function() {
+                    console.warn("WebSocket closed. Attempting to reconnect...");
+                    setTimeout(setupWebSockets, 1000);
+                };
+            } catch (error) {
+                console.error("Error setting up WebSocket:", error);
+            }
+        }
+
+        function createRetroShader() {
+            const retroVertexShader = `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `;
+
+            const retroFragmentShader = `
+                uniform vec3 color;
+                varying vec2 vUv;
+                void main() {
+                    vec2 center = vec2(0.5, 0.5);
+                    float dist = distance(vUv, center);
+                    gl_FragColor = vec4(color, 1.0) * (1.0 - dist);
+                }
+            `;
+
+            retroShader = new THREE.ShaderMaterial({
+                uniforms: {
+                    color: { value: new THREE.Color() }
+                },
+                vertexShader: retroVertexShader,
+                fragmentShader: retroFragmentShader,
+                transparent: true,
+                wireframe: true
+            });
+        }
+
+        function createAsteroidField() {
+            asteroids = new THREE.Group();
+            scene.add(asteroids);
+
+            const asteroidCount = parseInt(document.getElementById('asteroid-count').value);
+            for (let i = 0; i < asteroidCount; i++) {
+                const geometry = new THREE.IcosahedronGeometry(Math.random() * 2 + 0.5, 0);
+                const material = retroShader.clone();
+                material.uniforms.color.value.setHSL(Math.random(), 1, 0.5);
+                const asteroid = new THREE.Mesh(geometry, material);
+                asteroid.position.set(
+                    Math.random() * 200 - 100,
+                    Math.random() * 200 - 100,
+                    Math.random() * 200 - 100
+                );
+                asteroid.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+                asteroid.baseScale = Math.random() * 0.5 + 0.5;
+                asteroid.scale.setScalar(asteroid.baseScale);
+                asteroid.baseColor = material.uniforms.color.value.getHSL({});
+                asteroids.add(asteroid);
+                collisionObjects.push(asteroid);
+            }
+        }
+
+        function createGridBackground() {
+            const gridSize = 1000;
+            const gridDivisions = 100;
+            gridHelper = new THREE.GridHelper(gridSize, gridDivisions, 0xff00ff, 0x00ffff);
+            scene.add(gridHelper);
+
+            const starGeometry = new THREE.BufferGeometry();
+            const starMaterial = new THREE.PointsMaterial({ 
+                size: 0.1, 
+                vertexColors: true 
+            });
+            const starVertices = [];
+            const starColors = [];
+            for (let i = 0; i < 50000; i++) {
+                starVertices.push(
+                    Math.random() * 2000 - 1000,
+                    Math.random() * 2000 - 1000,
+                    Math.random() * 2000 - 1000
+                );
+                const color = new THREE.Color();
+                color.setHSL(Math.random(), 1, 0.5 + Math.random() * 0.5);
+                starColors.push(color.r, color.g, color.b);
+            }
+            starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
+            starGeometry.setAttribute('color', new THREE.Float32BufferAttribute(starColors, 3));
+            starField = new THREE.Points(starGeometry, starMaterial);
+            scene.add(starField);
+        }
+
+        function createCrosshair() {
+            const crosshairSize = 0.01;
+            const crosshairGeometry = new THREE.BufferGeometry();
+            const crosshairMaterial = new THREE.LineBasicMaterial({ color: 0xffffff });
+            
+            const vertices = new Float32Array([
+                -crosshairSize, 0, 0,
+                crosshairSize, 0, 0,
+                0, -crosshairSize, 0,
+                0, crosshairSize, 0
+            ]);
+            
+            crosshairGeometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+            const crosshair = new THREE.LineSegments(crosshairGeometry, crosshairMaterial);
+            crosshair.position.z = -0.5;
+            camera.add(crosshair);
+        }
+
+        function setupAudioControls() {
+            const startAudioButton = document.getElementById('start-audio');
+            startAudioButton.addEventListener('click', startAudioInput);
+        }
+
+        async function startAudioInput() {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                microphone = audioContext.createMediaStreamSource(stream);
+                microphone.connect(analyser);
+
+                document.getElementById('start-audio').disabled = true;
+                document.getElementById('start-audio').innerText = 'Audio Input Active';
+            } catch (error) {
+                console.error("Error starting audio input:", error);
+            }
+        }
+
+        function setupUIControls() {
+            const asteroidCountSlider = document.getElementById('asteroid-count');
+            asteroidCountSlider.addEventListener('input', () => {
+                document.getElementById('asteroid-count-value').innerText = asteroidCountSlider.value;
+                updateAsteroidCount(parseInt(asteroidCountSlider.value));
+            });
+
+            const flyingSpeedSlider = document.getElementById('flying-speed');
+            flyingSpeedSlider.addEventListener('input', () => {
+                flyingSpeed = parseFloat(flyingSpeedSlider.value);
+                document.getElementById('flying-speed-value').innerText = flyingSpeed;
+            });
+
+            const boostSpeedSlider = document.getElementById('boost-speed');
+            boostSpeedSlider.addEventListener('input', () => {
+                boostSpeed = parseFloat(boostSpeedSlider.value);
+                document.getElementById('boost-speed-value').innerText = boostSpeed;
+            });
+
+            const steeringSensitivitySlider = document.getElementById('steering-sensitivity');
+            steeringSensitivitySlider.addEventListener('input', () => {
+                steeringSensitivity = parseFloat(steeringSensitivitySlider.value);
+                document.getElementById('steering-sensitivity-value').innerText = steeringSensitivity;
+            });
+        }
+
+        function handleWebSocketMessage(event) {
+            const data = JSON.parse(event.data);
+            if (data.left) {
+                const smoothedLeft = new THREE.Vector2().lerp(lastLeftHandPosition, smoothingFactor).lerp(data.left, 1 - smoothingFactor);
+                lastLeftHandPosition.copy(smoothedLeft);
+                handleHandControls(smoothedLeft, data.right);
+            }
+        }
+
+        function handleHandControls(leftHand, rightHand) {
+            camera.position.x += (leftHand.x - 0.5) * steeringSensitivity;
+            camera.position.y += (leftHand.y - 0.5) * steeringSensitivity;
+
+            if (rightHand && rightHand.touches) {
+                if (rightHand.touches.index_thumb) shoot();
+                if (rightHand.touches.pinky_thumb) currentSpeed = boostSpeed;
+            }
+        }
+
+        function shoot() {
+            if (Date.now() - lastShootTime < shootCooldown) return;
+            lastShootTime = Date.now();
+
+            const bullet = new THREE.Mesh(
+                new THREE.SphereGeometry(0.2, 8, 8),
+                new THREE.MeshBasicMaterial({ color: 0xffaa00 })
+            );
+            bullet.position.copy(camera.position);
+            bullet.velocity = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).multiplyScalar(5);
+            bullets.push(bullet);
+            scene.add(bullet);
+        }
+
+        function updateAsteroidCount(newCount) {
+            while (asteroids.children.length > newCount) {
+                const asteroidToRemove = asteroids.children.pop();
+                scene.remove(asteroidToRemove);
+                collisionObjects = collisionObjects.filter(obj => obj !== asteroidToRemove);
+            }
+            while (asteroids.children.length < newCount) {
+                const geometry = new THREE.IcosahedronGeometry(Math.random() * 2 + 0.5, 0);
+                const material = retroShader.clone();
+                material.uniforms.color.value.setHSL(Math.random(), 1, 0.5);
+                const asteroid = new THREE.Mesh(geometry, material);
+                asteroid.position.set(
+                    Math.random() * 200 - 100,
+                    Math.random() * 200 - 100,
+                    Math.random() * 200 - 100
+                );
+                asteroid.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+                asteroid.baseScale = Math.random() * 0.5 + 0.5;
+                asteroid.scale.setScalar(asteroid.baseScale);
+                asteroids.add(asteroid);
+                collisionObjects.push(asteroid);
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Move and rotate asteroids
+            asteroids.children.forEach(asteroid => {
+                asteroid.rotation.x += 0.01;
+                asteroid.rotation.y += 0.01;
+                asteroid.position.z += currentSpeed;
+                if (asteroid.position.z > 100) asteroid.position.z = -100;
+
+                analyser.getByteFrequencyData(dataArray);
+                const avgFreq = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+                asteroid.scale.setScalar(asteroid.baseScale + avgFreq * 0.005);
+            });
+
+            // Update bullet positions
+            bullets.forEach(bullet => {
+                bullet.position.add(bullet.velocity);
+                if (bullet.position.z < -100) {
+                    scene.remove(bullet);
+                    bullets = bullets.filter(b => b !== bullet);
+                }
+            });
+
+            updateCameraPosition();
+            renderer.render(scene, camera);
+        }
+
+        function updateCameraPosition() {
+            camera.lookAt(cameraTarget);
+            cameraTarget.set(camera.position.x, camera.position.y, 0);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        function startVoiceRecognition() {
+            const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+            recognition.lang = 'en-US';
+            recognition.interimResults = false;
+            recognition.maxAlternatives = 1;
+
+            recognition.onresult = function(event) {
+                const command = event.results[0][0].transcript.toLowerCase();
+                console.log(`Command received: ${command}`);
+
+                if (command.includes("single agent")) {
+                    switchGameMode(1);
+                } else if (command.includes("swarm")) {
+                    switchGameMode(2);
+                } else if (command.includes("autonomous")) {
+                    switchGameMode(3);
+                } else {
+                    console.log("Unknown command");
+                }
+            };
+
+            recognition.start();
+        }
+
+        function switchGameMode(mode) {
+            console.log("Switching to mode:", mode);
+            switch (mode) {
+                case 1:
+                    console.log("Single-agent mode activated");
+                    break;
+                case 2:
+                    console.log("Swarm mode activated");
+                    break;
+                case 3:
+                    console.log("Autonomous swarm mode activated");
+                    break;
+                default:
+                    console.log("Unknown mode");
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>
+
