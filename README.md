@@ -19,7 +19,7 @@ To run the application:
 10) in the second window run:
      cd into the "python" directory
    then run:
-     python hand_detection_V2
+     python hand_detection_V2.py
 12) in the second window run:
      cd into the "python" directory
    then run:
