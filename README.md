@@ -24,3 +24,5 @@ To run the application:
      cd into the "python" directory
    then run:
      python voice_recognition.py
+13) open your browser, then type in the search bar:
+      http://http://localhost:8000/
