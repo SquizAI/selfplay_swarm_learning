@@ -1,3 +1,5 @@
+// controls.js/game_modes.js
+
 // Switch between different game modes
 function switchGameMode(mode) {
     switch(mode) {
