@@ -1,4 +1,6 @@
-// tools.js
+// js/tools.js
+
+
 function activateTool(toolName) {
     switch (toolName) {
         case 'information_gathering':
