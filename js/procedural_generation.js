@@ -1,4 +1,4 @@
-// procedural_generation.js
+// js/procedural_generation.js
 function generatePlanet() {
     const planetName = generateRandomName();
     const resources = Math.floor(Math.random() * 100);
