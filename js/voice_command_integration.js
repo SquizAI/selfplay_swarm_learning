@@ -1,3 +1,5 @@
+// js/voice_command_integration.js
+
 function startVoiceRecognition() {
     const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
     recognition.lang = 'en-US';
