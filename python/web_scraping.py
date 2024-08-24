@@ -1,4 +1,5 @@
-# web_scraping.py
+# python/web_scraping.py
+
 import requests
 from bs4 import BeautifulSoup
 
