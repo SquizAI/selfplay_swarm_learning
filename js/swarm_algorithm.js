@@ -1,4 +1,5 @@
-// swarm_algorithm.js
+// js/swarm_algorithm.js
+
 class SwarmAgent {
     constructor(position, type) {
         this.position = position;
