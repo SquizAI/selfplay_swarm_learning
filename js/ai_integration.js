@@ -1,4 +1,4 @@
-// ai_integration.js
+// // js/ai_integration.js
 async function fetchAIAction(observation) {
     // Send observation to Python backend and get AI-generated action
     const response = await fetch('/ai_action', {
