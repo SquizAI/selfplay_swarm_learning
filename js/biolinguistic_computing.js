@@ -1,4 +1,4 @@
-// biolinguistic_computing.js
+// js/biolinguistic_computing.js
 function analyzeStress(voiceTone, gestureSpeed) {
     let stressLevel = 0;
 
