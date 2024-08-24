@@ -1,3 +1,5 @@
+// js/controls.js
+
 export function switchGameMode(mode) {
     switch (mode) {
         case 1:
