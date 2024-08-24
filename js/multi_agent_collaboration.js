@@ -1,4 +1,4 @@
-// multi_agent_collaboration.js
+// js/multi_agent_collaboration.js
 
 import { AgentState, ToolNode, StateGraph } from 'langchain_core';
 import { TavilySearchResults } from 'langchain_community/tools/tavily_search';
