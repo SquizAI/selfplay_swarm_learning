@@ -1,3 +1,5 @@
+// js/render.js
+
 export function initializeRenderer(canvas, ctx) {
     // Setup for rendering logic
 }
