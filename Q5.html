@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced Space Swarm AI Game</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { display: block; }
+        #ui-container { position: absolute; top: 10px; left: 10px; color: white; font-family: Arial, sans-serif; }
+        #debug-panel { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.7); padding: 10px; color: #0f0; font-family: monospace; }
+        #hand-data { margin-top: 20px; }
+        #analysis-panel { 
+            position: absolute; 
+            bottom: 10px; 
+            left: 10px; 
+            background: rgba(0,0,0,0.7); 
+            color: white; 
+            padding: 10px; 
+            max-width: 300px; 
+            max-height: 200px; 
+            overflow-y: auto; 
+        }
+    </style>
+</head>
+<body>
+    <div id="ui-container">
+        <div id="score">Score: 0</div>
+        <div id="level">Level: 1</div>
+        <div id="health">Health: 100%</div>
+        <div id="hand-data"></div>
+    </div>
+    <div id="debug-panel"></div>
+    <div id="analysis-panel"></div>
+
+    <script>
+    class SpaceSwarmGame {
+        constructor() {
+            this.scene = new THREE.Scene();
+            this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            this.renderer = new THREE.WebGLRenderer({ antialias: true });
+            this.clock = new THREE.Clock();
+            
+            this.player = null;
+            this.mothership = null;
+            this.swarmAgents = [];
+            this.asteroids = [];
+            this.planets = [];
+            this.artifacts = [];
+            
+            this.score = 0;
+            this.level = 1;
+            this.health = 100;
+            
+            this.bcoAlgorithm = new BCOAlgorithm(this);
+            this.particleSystem = new ParticleSystem(this.scene);
+            this.missionGenerator = new MissionGenerator(this);
+            
+            this.rareElements = [
+                "Astatine", "Francium", "Rhenium", "Osmium", "Iridium", "Ruthenium", 
+                "Technetium", "Rhodium", "Palladium", "Tantalum", "Hafnium", "Scandium", 
+                "Tellurium", "Thulium", "Neptunium", "Protactinium", "Plutonium", 
+                "Promethium", "Curium", "Californium"
+            ];
+            this.analysisPanel = document.getElementById('analysis-panel');
+            
+            this.init();
+            this.setupWebSocket();
+        }
+
+        init() {
+            this.setupRenderer();
+            this.setupLights();
+            this.createStarfield();
+            this.createPlayer();
+            this.createMothership();
+            this.createSwarmAgents();
+            this.createAsteroids();
+            this.createPlanets();
+            this.createArtifacts();
+            this.setupEventListeners();
+            this.animate();
+        }
+
+        setupRenderer() {
+            this.renderer.setSize(window.innerWidth, window.innerHeight);
+            this.renderer.setPixelRatio(window.devicePixelRatio);
+            this.renderer.outputEncoding = THREE.sRGBEncoding;
+            document.body.appendChild(this.renderer.domElement);
+        }
+
+        setupLights() {
+            const ambientLight = new THREE.AmbientLight(0x404040);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+            directionalLight.position.set(1, 1, 1);
+            this.scene.add(ambientLight, directionalLight);
+        }
+
+        createStarfield() {
+            const geometry = new THREE.BufferGeometry();
+            const vertices = [];
+
+            for (let i = 0; i < 10000; i++) {
+                vertices.push(
+                    Math.random() * 2000 - 1000,
+                    Math.random() * 2000 - 1000,
+                    Math.random() * 2000 - 1000
+                );
+            }
+
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+
+            const material = new THREE.PointsMaterial({
+                color: 0xffffff,
+                size: 0.5,
+                sizeAttenuation: true
+            });
+
+            const starfield = new THREE.Points(geometry, material);
+            this.scene.add(starfield);
+        }
+
+        createPlayer() {
+            this.player = new THREE.Group();
+
+            const bodyGeometry = new THREE.BoxGeometry(1, 0.2, 1);
+            const bodyMaterial = new THREE.MeshPhongMaterial({ color: 0x00ff00, shininess: 100 });
+            const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+            this.player.add(body);
+
+            const armGeometry = new THREE.CylinderGeometry(0.05, 0.05, 0.8);
+            const armMaterial = new THREE.MeshPhongMaterial({ color: 0x333333, shininess: 100 });
+            
+            for (let i = 0; i < 4; i++) {
+                const arm = new THREE.Mesh(armGeometry, armMaterial);
+                arm.position.set(
+                    i % 2 === 0 ? 0.4 : -0.4,
+                    0,
+                    i < 2 ? 0.4 : -0.4
+                );
+                arm.rotation.z = i % 2 === 0 ? Math.PI / 4 : -Math.PI / 4;
+                this.player.add(arm);
+            }
+
+            const rotorGeometry = new THREE.CylinderGeometry(0.3, 0.3, 0.05, 16);
+            const rotorMaterial = new THREE.MeshPhongMaterial({ color: 0x666666, shininess: 100 });
+
+            for (let i = 0; i < 4; i++) {
+                const rotor = new THREE.Mesh(rotorGeometry, rotorMaterial);
+                rotor.position.set(
+                    i % 2 === 0 ? 0.6 : -0.6,
+                    0.1,
+                    i < 2 ? 0.6 : -0.6
+                );
+                this.player.add(rotor);
+            }
+
+            this.scene.add(this.player);
+            this.camera.position.set(0, 2, 5);
+            this.camera.lookAt(this.player.position);
+        }
+
+        createMothership() {
+            const geometry = new THREE.CylinderGeometry(2, 2, 5, 32);
+            const material = new THREE.MeshPhongMaterial({ 
+                color: 0x00ffff,
+                shininess: 100,
+                emissive: 0x0088ff,
+                emissiveIntensity: 0.2
+            });
+            this.mothership = new THREE.Mesh(geometry, material);
+            this.mothership.position.set(0, 0, -50);
+            this.scene.add(this.mothership);
+        }
+
+        createSwarmAgents() {
+            const utilities = ['speed', 'efficiency', 'capacity', 'detection'];
+            for (let i = 0; i < 10; i++) {
+                const agent = new SwarmAgent(this, utilities[i % utilities.length]);
+                this.swarmAgents.push(agent);
+                this.scene.add(agent.mesh);
+            }
+        }
+
+        createAsteroids() {
+            for (let i = 0; i < 50; i++) {
+                const asteroid = new Asteroid();
+                this.asteroids.push(asteroid);
+                this.scene.add(asteroid.mesh);
+            }
+        }
+
+        createPlanets() {
+            const planetData = [
+                { name: "Rocky Planet", radius: 5, color: 0xA52A2A },
+                { name: "Gas Giant", radius: 10, color: 0xFFA500 },
+                { name: "Ice World", radius: 7, color: 0xADD8E6 }
+            ];
+
+            planetData.forEach(data => {
+                const planet = new Planet(data);
+                this.planets.push(planet);
+                this.scene.add(planet.mesh);
+            });
+        }
+
+        createArtifacts() {
+            for (let i = 0; i < 5; i++) {
+                const artifact = new Artifact();
+                this.artifacts.push(artifact);
+                this.scene.add(artifact.mesh);
+            }
+        }
+
+        setupEventListeners() {
+            window.addEventListener('resize', this.onWindowResize.bind(this), false);
+            document.addEventListener('keydown', this.onKeyDown.bind(this), false);
+        }
+
+        onWindowResize() {
+            this.camera.aspect = window.innerWidth / window.innerHeight;
+            this.camera.updateProjectionMatrix();
+            this.renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        onKeyDown(event) {
+            switch(event.code) {
+                case 'ArrowLeft':
+                    this.player.position.x -= 0.5;
+                    break;
+                case 'ArrowRight':
+                    this.player.position.x += 0.5;
+                    break;
+                case 'ArrowUp':
+                    this.player.position.y += 0.5;
+                    break;
+                case 'ArrowDown':
+                    this.player.position.y -= 0.5;
+                    break;
+            }
+        }
+
+        setupWebSocket() {
+            this.socket = new WebSocket('ws://localhost:6780');
+            this.socket.onmessage = (event) => {
+                const handData = JSON.parse(event.data);
+                this.updatePlayerPosition(handData);
+                this.updateHandDataDisplay(handData);
+            };
+            this.socket.onerror = (error) => {
+                console.error(`WebSocket Error: ${error}`);
+            };
+        }
+
+        updatePlayerPosition(handData) {
+            if (handData.left) {
+                this.player.position.x = (handData.left.x - 0.5) * 10;
+                this.player.position.y = (handData.left.y - 0.5) * 10;
+            }
+
+            if (handData.right) {
+                const isBoostActive = handData.right.touches.pinky_thumb;
+                const isShootingActive = handData.right.touches.pointer_thumb;
+                
+                if (isBoostActive) {
+                    this.boost();
+                }
+                if (isShootingActive) {
+                    this.shoot();
+                }
+            }
+        }
+
+        updateHandDataDisplay(handData) {
+            let displayText = '';
+            for (const hand in handData) {
+                if (handData[hand]) {
+                    displayText += `${hand.toUpperCase()} HAND:\n`;
+                    displayText += `Position: (${handData[hand].x.toFixed(2)}, ${handData[hand].y.toFixed(2)})\n`;
+                    displayText += `Gestures: ${Object.entries(handData[hand].touches)
+                        .filter(([, value]) => value)
+                        .map(([key]) => key)
+                        .join(', ')}\n\n`;
+                }
+            }
+            document.getElementById('hand-data').innerText = displayText;
+        }
+
+        boost() {
+            this.player.position.z -= 0.5;
+        }
+
+        shoot() {
+            const bulletGeometry = new THREE.SphereGeometry(0.1, 32, 32);
+            const bulletMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+            const bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
+            bullet.position.copy(this.player.position);
+            this.scene.add(bullet);
+
+            const bulletSpeed = 1;
+            const animateBullet = () => {
+                bullet.position.z -= bulletSpeed;
+                if (bullet.position.z < -100) {
+                    this.scene.remove(bullet);
+                } else {
+                    requestAnimationFrame(animateBullet);
+                }
+            };
+            animateBullet();
+        }
+
+        update() {
+            const delta = this.clock.getDelta();
+            
+            this.updatePlayer(delta);
+            this.bcoAlgorithm.update();
+            this.updateSwarmAgents(delta);
+            this.updateAsteroids(delta);
+            this.updatePlanets(delta);
+            this.checkCollisions();
+            this.particleSystem.update(delta);
+            this.missionGenerator.update(delta);
+            this.checkAgentArtifactCollection();
+            
+            this.updateUI();
+            this.updateDebugPanel();
+        }
+
+        updatePlayer(delta) {
+            this.player.children.forEach((child, index) => {
+                if (index > 4) { // The rotors are the last four children
+                    child.rotation.y += (index % 2 === 0 ? 1 : -1) * 10 * delta;
+                }
+            });
+
+            this.player.position.z -= 0.1;
+            
+            this.camera.position.z = this.player.position.z + 5;
+            this.camera.position.y = this.player.position.y + 2;
+            this.camera.lookAt(this.player.position);
+        }
+
+        updateSwarmAgents(delta) {
+            this.swarmAgents.forEach(agent => agent.update(delta));
+        }
+
+        updateAsteroids(delta) {
+            this.asteroids.forEach(asteroid => asteroid.update(delta));
+        }
+
+        updatePlanets(delta) {
+            this.planets.forEach(planet => planet.update(delta));
+        }
+
+        checkCollisions() {
+            this.asteroids.forEach(asteroid => {
+                if (this.player.position.distanceTo(asteroid.mesh.position) < 1) {
+                    this.health -= 10;
+                    if (this.health <= 0) {
+                        this.gameOver();
+                    }
+                    this.particleSystem.createExplosion(asteroid.mesh.position, 0xff0000, 20);
+                    asteroid.reset();
+                }
+            });
+
+            this.artifacts.forEach(artifact => {
+                if (this.player.position.distanceTo(artifact.mesh.position) < 1) {
+                    this.score += 100;
+                    this.particleSystem.createExplosion(artifact.mesh.position, 0xffff00, 30);
+                    artifact.reset();
+                }
+            });
+        }
+
+        checkAgentArtifactCollection() {
+            this.swarmAgents.forEach(agent => {
+                if (agent.hasArtifact && agent.mesh.position.distanceTo(this.mothership.position) < 3) {
+                    this.score += 100 * agent.getUtilityMultiplier();
+                    agent.hasArtifact = false;
+                    agent.state = 'searching';
+                    console.log(`Agent returned artifact. Score: ${this.score}`);
+                }
+            });
+        }
+
+        gameOver() {
+            alert(`Game Over! Your score: ${this.score}`);
+            this.reset();
+        }
+
+        reset() {
+            this.score = 0;
+            this.level = 1;
+            this.health = 100;
+            this.player.position.set(0, 0, 0);
+            this.asteroids.forEach(asteroid => asteroid.reset());
+            this.artifacts.forEach(artifact => artifact.reset());
+            this.swarmAgents.forEach(agent => agent.reset());
+        }
+
+        updateUI() {
+            document.getElementById('score').innerText = `Score: ${this.score}`;
+            document.getElementById('level').innerText = `Level: ${this.level}`;
+            document.getElementById('health').innerText = `Health: ${this.health}%`;
+        }
+
+        updateDebugPanel() {
+            const debugInfo = `
+                FPS: ${Math.round(1 / this.clock.getDelta())}
+                Player Pos: (${this.player.position.x.toFixed(2)}, ${this.player.position.y.toFixed(2)}, ${this.player.position.z.toFixed(2)})
+                Swarm Agents: ${this.swarmAgents.length}
+                Asteroids: ${this.asteroids.length}
+                BCO Iterations: ${this.bcoAlgorithm.iterations}
+            `;
+            document.getElementById('debug-panel').innerText = debugInfo;
+        }
+
+        animate() {
+            requestAnimationFrame(this.animate.bind(this));
+            this.update();
+            this.renderer.render(this.scene, this.camera);
+        }
+
+        async performRareElementAnalysis(element) {
+    try {
+        const response = await fetch(`http://localhost:6060/analyze/${element}`, {
+            method: 'GET',
+            mode: 'cors', // Ensure CORS mode is enabled
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        });
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        this.displayAnalysis(element, data.analysis);
+    } catch (error) {
+        console.error("Error in rare element analysis:", error);
+        this.displayAnalysis(element, "Analysis failed. Please try again later.");
+    }
+}
+
+
+        displayAnalysis(element, analysis) {
+            this.analysisPanel.innerHTML = `
+                <h3>Analysis of ${element}</h3>
+                <p>${analysis}</p>
+            `;
+        }
+    }
+
+    class BCOAlgorithm {
+        constructor(game) {
+            this.game = game;
+            this.iterations = 0;
+            this.SN = 10; // Number of swarm agents
+            this.D = 3;   // Number of dimensions (x, y, z)
+            this.limit = this.SN * this.D;
+            this.maxCycles = 100;
+        }
+
+        update() {
+            if (this.iterations >= this.maxCycles) return;
+
+            this.employedPhase();
+            this.onlookerPhase();
+            this.scoutPhase();
+
+            this.iterations++;
+        }
+
+        employedPhase() {
+            this.game.swarmAgents.forEach((agent, i) => {
+                const k = this.getRandomAgentExcept(i);
+                const newStrategy = this.generateNewStrategy(agent.strategy, this.game.swarmAgents[k].strategy);
+                const newFitness = this.evaluateStrategy(newStrategy, agent);
+                
+                if (newFitness > agent.fitness) {
+                    agent.strategy = newStrategy;
+                    agent.fitness = newFitness;
+                    agent.trials = 0;
+                } else {
+                    agent.trials++;
+                }
+            });
+        }
+
+        onlookerPhase() {
+            const totalFitness = this.game.swarmAgents.reduce((sum, agent) => sum + agent.fitness, 0);
+            let t = 0, i = 0;
+
+            while (t < this.SN) {
+                const agent = this.game.swarmAgents[i];
+                if (Math.random() < agent.fitness / totalFitness) {
+                    const k = this.getRandomAgentExcept(i);
+                    const newStrategy = this.generateNewStrategy(agent.strategy, this.game.swarmAgents[k].strategy);
+                    const newFitness = this.evaluateStrategy(newStrategy, agent);
+                    
+                    if (newFitness > agent.fitness) {
+                        agent.strategy = newStrategy;
+                        agent.fitness = newFitness;
+                        agent.trials = 0;
+                    } else {
+                        agent.trials++;
+                    }
+                    t++;
+                }
+                i = (i + 1) % this.SN;
+            }
+        }
+
+        scoutPhase() {
+            this.game.swarmAgents.forEach(agent => {
+                if (agent.trials >= this.limit) {
+                    agent.strategy = this.generateRandomStrategy();
+                    agent.fitness = this.evaluateStrategy(agent.strategy, agent);
+                    agent.trials = 0;
+                }
+            });
+        }
+
+        getRandomAgentExcept(index) {
+            let k;
+            do {
+                k = Math.floor(Math.random() * this.SN);
+            } while (k === index);
+            return k;
+        }
+
+        generateNewStrategy(currentStrategy, neighborStrategy) {
+            return currentStrategy.map((value, j) => {
+                const phi = Math.random() * 2 - 1;
+                return value + phi * (value - neighborStrategy[j]);
+            });
+        }
+
+        generateRandomStrategy() {
+            return Array(this.D).fill().map(() => Math.random() * 200 - 100);
+        }
+
+        evaluateStrategy(strategy, agent) {
+            const playerPos = this.game.player.position;
+            const mothershipPos = this.game.mothership.position;
+            const artifactPositions = this.game.artifacts.map(a => a.mesh.position);
+
+            const distanceToPlayer = this.calculateDistance(strategy, playerPos);
+            const distanceToMothership = this.calculateDistance(strategy, mothershipPos);
+            const distanceToNearestArtifact = Math.min(...artifactPositions.map(pos => this.calculateDistance(strategy, pos)));
+
+            const searchingWeight = agent.state === 'searching' ? 0.8 : 0.2;
+            const returningWeight = agent.state === 'returning' ? 0.8 : 0.2;
+
+            const searchingFitness = 1 / (1 + distanceToNearestArtifact);
+            const returningFitness = 1 / (1 + distanceToMothership);
+
+            return searchingWeight * searchingFitness + returningWeight * returningFitness;
+        }
+
+        calculateDistance(strategy, position) {
+            return Math.sqrt(
+                Math.pow(strategy[0] - position.x, 2) +
+                Math.pow(strategy[1] - position.y, 2) +
+                Math.pow(strategy[2] - position.z, 2)
+            );
+        }
+    }
+
+    class ParticleSystem {
+        constructor(scene) {
+            this.scene = scene;
+            this.particles = [];
+        }
+
+        createExplosion(position, color, count) {
+            for (let i = 0; i < count; i++) {
+                const particle = new THREE.Sprite(new THREE.SpriteMaterial({
+                    color: color,
+                    transparent: true,
+                    opacity: 0.8
+                }));
+                particle.position.copy(position);
+                particle.scale.set(0.2, 0.2, 0.2);
+                particle.velocity = new THREE.Vector3(
+                    Math.random() * 2 - 1,
+                    Math.random() * 2 - 1,
+                    Math.random() * 2 - 1
+                );
+                this.particles.push(particle);
+                this.scene.add(particle);
+            }
+        }
+
+        update(delta) {
+            this.particles.forEach((particle, index) => {
+                particle.position.add(particle.velocity.multiplyScalar(delta));
+                particle.material.opacity -= delta * 0.5;
+                if (particle.material.opacity <= 0) {
+                    this.scene.remove(particle);
+                    this.particles.splice(index, 1);
+                }
+            });
+        }
+    }
+
+    class MissionGenerator {
+        constructor(game) {
+            this.game = game;
+            this.activeMissions = [];
+            this.missionTypes = ['exploration', 'combat', 'rescue', 'mining'];
+        }
+
+        generateMission() {
+            const type = this.missionTypes[Math.floor(Math.random() * this.missionTypes.length)];
+            const mission = {
+                type: type,
+                target: this.getRandomTarget(),
+                reward: Math.floor(Math.random() * 1000) + 500,
+                timeLimit: Math.floor(Math.random() * 300) + 60
+            };
+            this.activeMissions.push(mission);
+        }
+
+        getRandomTarget() {
+            const targetTypes = ['planet', 'asteroid', 'artifact'];
+            const type = targetTypes[Math.floor(Math.random() * targetTypes.length)];
+            switch(type) {
+                case 'planet':
+                    return this.game.planets[Math.floor(Math.random() * this.game.planets.length)];
+                case 'asteroid':
+                    return this.game.asteroids[Math.floor(Math.random() * this.game.asteroids.length)];
+                case 'artifact':
+                    return this.game.artifacts[Math.floor(Math.random() * this.game.artifacts.length)];
+            }
+        }
+
+        update(delta) {
+            if (Math.random() < 0.01) { // 1% chance each frame to generate a new mission
+                this.generateMission();
+            }
+
+            this.activeMissions = this.activeMissions.filter(mission => {
+                mission.timeLimit -= delta;
+                if (mission.timeLimit <= 0) {
+                    console.log(`Mission failed: ${mission.type}`);
+                    return false;
+                }
+                if (this.game.player.position.distanceTo(mission.target.mesh.position) < 5) {
+                    console.log(`Mission completed: ${mission.type}`);
+                    this.game.score += mission.reward;
+                    return false;
+                }
+                return true;
+            });
+        }
+    }
+
+    class SwarmAgent {
+        constructor(game, utility) {
+            this.game = game;
+            this.utility = utility;
+            
+            const geometry = new THREE.SphereGeometry(0.2, 32, 32);
+            const material = new THREE.MeshPhongMaterial({ 
+                color: this.getColorForUtility(),
+                shininess: 100,
+                emissive: this.getColorForUtility(),
+                emissiveIntensity: 0.2
+            });
+            this.mesh = new THREE.Mesh(geometry, material);
+            
+            this.strategy = this.game.bcoAlgorithm.generateRandomStrategy();
+            this.fitness = 0;
+            this.trials = 0;
+            this.hasArtifact = false;
+            this.state = 'searching';
+        }
+
+        getColorForUtility() {
+            switch(this.utility) {
+                case 'speed': return 0xff0000;
+                case 'efficiency': return 0x00ff00;
+                case 'capacity': return 0x0000ff;
+                case 'detection': return 0xffff00;
+            }
+        }
+
+        update(delta) {
+            if (this.state === 'searching') {
+                this.searchForArtifact(delta);
+            } else if (this.state === 'returning') {
+                this.returnToMothership(delta);
+            }
+        }
+
+        searchForArtifact(delta) {
+            const targetPos = new THREE.Vector3(this.strategy[0], this.strategy[1], this.strategy[2]);
+            const direction = targetPos.sub(this.mesh.position).normalize();
+            this.mesh.position.add(direction.multiplyScalar(delta * this.getSpeedMultiplier()));
+
+            this.game.artifacts.forEach(artifact => {
+                if (!this.hasArtifact && this.mesh.position.distanceTo(artifact.mesh.position) < this.getDetectionRange()) {
+                    this.collectArtifact(artifact);
+                }
+            });
+
+            this.mesh.lookAt(targetPos);
+        }
+
+        returnToMothership(delta) {
+            const direction = this.game.mothership.position.clone().sub(this.mesh.position).normalize();
+            this.mesh.position.add(direction.multiplyScalar(delta * this.getSpeedMultiplier()));
+            this.mesh.lookAt(this.game.mothership.position);
+        }
+
+        collectArtifact(artifact) {
+            this.hasArtifact = true;
+            this.state = 'returning';
+            artifact.reset();
+            console.log(`Agent collected artifact. Utility: ${this.utility}`);
+            
+            // Trigger rare element analysis
+            const randomElement = this.game.rareElements[Math.floor(Math.random() * this.game.rareElements.length)];
+            this.game.performRareElementAnalysis(randomElement);
+        }
+
+        getSpeedMultiplier() {
+            return this.utility === 'speed' ? 7 : 5;
+        }
+
+        getDetectionRange() {
+            return this.utility === 'detection' ? 3 : 1;
+        }
+
+        getUtilityMultiplier() {
+            switch(this.utility) {
+                case 'speed': return 1.2;
+                case 'efficiency': return 1.5;
+                case 'capacity': return 2;
+                case 'detection': return 1.3;
+                default: return 1;
+            }
+        }
+
+        reset() {
+            this.mesh.position.set(
+                Math.random() * 10 - 5,
+                Math.random() * 10 - 5,
+                Math.random() * -50 - 20
+            );
+            this.hasArtifact = false;
+            this.state = 'searching';
+            this.strategy = this.game.bcoAlgorithm.generateRandomStrategy();
+            this.fitness = 0;
+            this.trials = 0;
+        }
+    }
+
+    class Asteroid {
+        constructor() {
+            const geometry = new THREE.DodecahedronGeometry(Math.random() * 0.5 + 0.5);
+            const material = new THREE.MeshStandardMaterial({ 
+                color: 0x808080,
+                roughness: 0.8,
+                metalness: 0.2
+            });
+            this.mesh = new THREE.Mesh(geometry, material);
+            this.reset();
+            this.rotationSpeed = new THREE.Vector3(
+                Math.random() * 0.02 - 0.01,
+                Math.random() * 0.02 - 0.01,
+                Math.random() * 0.02 - 0.01
+            );
+        }
+
+        update(delta) {
+            this.mesh.rotation.x += this.rotationSpeed.x;
+            this.mesh.rotation.y += this.rotationSpeed.y;
+            this.mesh.rotation.z += this.rotationSpeed.z;
+            this.mesh.position.z += 0.1;
+
+            if (this.mesh.position.z > 10) {
+                this.reset();
+            }
+        }
+
+        reset() {
+            this.mesh.position.set(
+                Math.random() * 10 - 5,
+                Math.random() * 10 - 5,
+                Math.random() * -50 - 20
+            );
+        }
+    }
+
+    class Planet {
+        constructor(data) {
+            this.name = data.name;
+            const geometry = new THREE.SphereGeometry(data.radius, 64, 64);
+            const material = new THREE.MeshPhongMaterial({
+                color: data.color,
+                map: this.generatePlanetTexture(data.color),
+                bumpMap: this.generateBumpMap(),
+                bumpScale: 0.05,
+                shininess: 10
+            });
+            this.mesh = new THREE.Mesh(geometry, material);
+            this.mesh.position.set(
+                Math.random() * 100 - 50,
+                Math.random() * 100 - 50,
+                Math.random() * -200 - 100
+            );
+            this.rotationSpeed = Math.random() * 0.001 + 0.0005;
+        }
+
+        generatePlanetTexture(baseColor) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            const gradient = ctx.createLinearGradient(0, 0, 0, 256);
+            gradient.addColorStop(0, `#${baseColor.toString(16).padStart(6, '0')}`);
+            gradient.addColorStop(1, '#000000');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 512, 256);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        generateBumpMap() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            for (let y = 0; y < 256; y++) {
+                for (let x = 0; x < 512; x++) {
+                    const value = Math.random() * 50;
+                    ctx.fillStyle = `rgb(${value},${value},${value})`;
+                    ctx.fillRect(x, y, 1, 1);
+                }
+            }
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        update(delta) {
+            this.mesh.rotation.y += this.rotationSpeed * delta;
+        }
+    }
+
+    class Artifact {
+        constructor() {
+            const geometry = new THREE.OctahedronGeometry(0.5);
+            const material = new THREE.MeshPhongMaterial({
+                color: 0xFFD700,
+                emissive: 0xFFD700,
+                emissiveIntensity: 0.5,
+                shininess: 100
+            });
+            this.mesh = new THREE.Mesh(geometry, material);
+            this.reset();
+            this.rotationSpeed = new THREE.Vector3(
+                Math.random() * 0.02 - 0.01,
+                Math.random() * 0.02 - 0.01,
+                Math.random() * 0.02 - 0.01
+            );
+        }
+
+        update(delta) {
+            this.mesh.rotation.x += this.rotationSpeed.x;
+            this.mesh.rotation.y += this.rotationSpeed.y;
+            this.mesh.rotation.z += this.rotationSpeed.z;
+        }
+
+        reset() {
+            this.mesh.position.set(
+                Math.random() * 20 - 10,
+                Math.random() * 20 - 10,
+                Math.random() * -100 - 50
+            );
+        }
+    }
+
+    // Initialize and start the game
+    const game = new SpaceSwarmGame();
+    </script>
+</body>
+</html>
