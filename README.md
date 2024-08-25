@@ -25,4 +25,4 @@ To run the application:
    then run:
      python voice_recognition.py
 13) open your browser, then type in the search bar:
-      http://localhost:8000/Q5.html
+      http://localhost:5500/Q5.html
