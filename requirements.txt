@@ -12,4 +12,8 @@ opencv-python==4.8.0.76
 pandas==2.0.3
 three==0.130.1
 cvzone==1.6.1
+bs4==0.02
+langchain-google-genai==1.0.10
 python-dotenv
+
+
